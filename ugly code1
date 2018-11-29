@@ -1,0 +1,288 @@
+#实现minst数据集,上班期间赶工,未能训练到最佳，实现思路和代码如下(临时安装的pycharm)
+#1:搜索图像识别相关算法，vgg16老但是通用，对照算法流程实现了下，代码如下(赶工略丑)
+#发现原本的vgg16做的话好像损失函数保持不变，怀疑梯度爆炸，将vgg16的激活函数由relu改为sigmoid，发现依然没效果，加上dropout和bn后预测结果出现nan等
+#奇怪的东西，使用tf.clip_by_value调整数据，总算能正常训练，但是结果令人堪忧，没有训练很多次，但是从不断调整batch大小的情况来看，效果十分不好
+#损失函数一会大一会小，原因未知，所以有了第二步，，，
+import tensorflow as tf
+import numpy as np
+import os
+import mdata
+import gzip
+from sklearn.utils import shuffle
+np.set_printoptions(suppress=True)
+def load_mnist(path, kind='train'):
+    """Load MNIST data from `path`"""
+    labels_path = os.path.join(path,
+                               '%s-labels-idx1-ubyte.gz'
+                               % kind)
+    images_path = os.path.join(path,
+                               '%s-images-idx3-ubyte.gz'
+                               % kind)
+
+    with gzip.open(labels_path, 'rb') as lbpath:
+        labels = np.frombuffer(lbpath.read(), dtype=np.uint8,
+                               offset=8)
+
+    with gzip.open(images_path, 'rb') as imgpath:
+        images = np.frombuffer(imgpath.read(), dtype=np.uint8,
+                               offset=16).reshape(len(labels), 784)
+
+    return images, labels
+def get_one_hot(label):
+    classes = max(label) + 1  ##类别数为最大数加1
+    one_hot_label = np.zeros(shape=(label.shape[0], classes))  ##生成全0矩阵
+    one_hot_label[np.arange(0, label.shape[0]), label] = 1
+    return one_hot_label
+def train_vgg16(x,y,xtest,ytest):
+    #input xs data
+    xss = tf.placeholder(tf.float32,[None,28,28])
+    #input ys data
+    ys = tf.placeholder(tf.float32,[None,10])
+    # reshape my xs data
+    xs = tf.reshape(xss,[-1,28,28,1])
+    #cnn layer:1
+    with tf.name_scope("conv1_1") as scope:
+        w = tf.Variable(tf.truncated_normal([3, 3, 1 ,16], stddev=0.01), name="w")
+        conv = tf.nn.conv2d(xs, w, [1, 1, 1, 1], padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([16], stddev=0.1))
+        out = tf.nn.bias_add(conv, biases)
+        conv1_1 = out
+        #size
+    with tf.name_scope("conv1_2") as scope:
+        w = tf.Variable(tf.truncated_normal([3,3,16,16],stddev=0.1),name = "w")
+        conv = tf.nn.conv2d(conv1_1,w,[1,1,1,1],padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([16],stddev=0.1))
+        out = tf.nn.bias_add(conv,biases)
+        conv1_2 = tf.nn.relu(out)
+    #pool layer:1
+    pool_1 = tf.nn.max_pool(conv1_2,[1,2,2,1],[1,2,2,1],padding="SAME")
+
+    # cnn layer:2
+    with tf.name_scope("conv2_1") as scope:
+        w = tf.Variable(tf.truncated_normal([3,3,16,32]),name= "w")
+        conv = tf.nn.conv2d(pool_1,w,[1,1,1,1],padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([32],stddev=0.1))
+        out = tf.nn.bias_add(conv,biases)
+        conv2_1 = out
+
+    with tf.name_scope("conv2_2") as scope:
+        w = tf.Variable(tf.truncated_normal([3,3,32,32]),name = "w")
+        conv = tf.nn.conv2d(conv2_1,w,[1,1,1,1],padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([32],stddev=0.1))
+        out = tf.nn.bias_add(conv,biases)
+        conv2_2 = tf.nn.relu(out)
+    #pool layer2
+    pool_2 = tf.nn.max_pool(conv2_2,[1,2,2,1],[1,2,2,1],padding="SAME")
+
+    # cnn layer:3
+    with tf.name_scope("conv3_1") as scope:
+        w = tf.Variable(tf.truncated_normal([3,3,32,64]),name = "w")
+        conv = tf.nn.conv2d(pool_2,w,[1,1,1,1],padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([64],stddev=0.1))
+        out = tf.nn.bias_add(conv,biases)
+        conv3_1 = out
+    with tf.name_scope("conv3_2") as scope:
+        w = tf.Variable(tf.truncated_normal([3,3,64,64],name="w"))
+        conv = tf.nn.conv2d(conv3_1,w,[1,1,1,1],padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([64],name="w"))
+        out = tf.nn.bias_add(conv,biases)
+        conv3_2 = out
+    with tf.name_scope("conv3_3") as scope:
+        w = tf.Variable(tf.truncated_normal([3,3,64,64],name="w"))
+        conv = tf.nn.conv2d(conv3_2,w,[1,1,1,1],padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([64],stddev=0.1))
+        out = tf.nn.bias_add(conv,biases)
+        conv3_3 = tf.nn.relu(out)
+
+    # pool layer3
+    pool_3 = tf.nn.max_pool(conv3_3,[1,2,2,1],[1,2,2,1],padding="SAME")
+
+    #cnn layer4
+    with tf.name_scope("conv4_1") as scope:
+        w = tf.Variable(tf.truncated_normal([3,3,64,128],stddev=0.1))
+        conv = tf.nn.conv2d(pool_3,w,[1,1,1,1],padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([128], stddev=0.1))
+        out = tf.nn.bias_add(conv,biases)
+        conv4_1 = out
+    with tf.name_scope("conv4_2") as scope:
+        w = tf.Variable(tf.truncated_normal([3,3,128,128],stddev=0.1))
+        conv = tf.nn.conv2d(conv4_1,w,[1,1,1,1],padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([128],  stddev=0.1))
+        out = tf.nn.bias_add(conv,biases)
+        conv4_2 = out
+    with tf.name_scope("conv4_3") as scope:
+        w = tf.Variable(tf.truncated_normal([3, 3, 128, 128], stddev=0.1))
+        conv = tf.nn.conv2d(conv4_2, w, [1, 1, 1, 1], padding="SAME")
+        biases = tf.Variable(tf.truncated_normal([128], stddev=0.1))
+        out = tf.nn.bias_add(conv, biases)
+        conv4_3 = tf.nn.relu(out)
+    # pool layer4
+    pool_4 = tf.nn.max_pool(conv4_3,[1,2,2,1],[1,2,2,1],padding="SAME")
+
+    # conv_5
+    with tf.name_scope('conv5_1') as scope:
+        kernel = tf.Variable(tf.truncated_normal([3, 3, 128, 256],  stddev=0.1), name='weights')
+        conv = tf.nn.conv2d(pool_4, kernel, [1, 1, 1, 1], padding='SAME')
+        biases = tf.Variable(tf.truncated_normal([256], stddev=0.1))
+        out = tf.nn.bias_add(conv, biases)
+        conv5_1 = out
+    with tf.name_scope('conv5_2') as scope:
+        kernel = tf.Variable(tf.truncated_normal([3, 3, 256, 256],  stddev=0.1), name='weights')
+        conv = tf.nn.conv2d(conv5_1, kernel, [1, 1, 1, 1], padding='SAME')
+        biases = tf.Variable(tf.truncated_normal([256],stddev=0.1))
+        out = tf.nn.bias_add(conv, biases)
+        conv5_2 = out
+    with tf.name_scope('conv5_3') as scope:
+        kernel = tf.Variable(tf.truncated_normal([3, 3, 256, 256], stddev=0.1), name='weights')
+        conv = tf.nn.conv2d(conv5_2, kernel, [1, 1, 1, 1], padding='SAME')
+        biases = tf.Variable(tf.truncated_normal([256],stddev=0.1))
+        out = tf.nn.bias_add(conv, biases)
+        conv5_3 = out
+    # pool_5
+    pool_5 = tf.nn.max_pool(conv5_3, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name='pool_5')
+
+    # fc1
+    with tf.name_scope('fc1') as scope:
+        shape = int(np.prod(pool_5.get_shape()[1:]))
+        fc1w = tf.Variable(tf.truncated_normal([shape, 128], stddev=0.1), name='weights')
+        fc1b = tf.Variable(tf.truncated_normal([128],stddev=0.1))
+        pool5_flat = tf.reshape(pool_5, [-1, shape])
+        fc11 = tf.matmul(pool5_flat, fc1w) + fc1b
+        fc1 = tf.nn.relu(fc11)
+
+    # fc2
+    with tf.name_scope('fc2') as scope:
+        fc2w = tf.Variable(tf.truncated_normal([128, 64], stddev=0.1), name='weights')
+        fc2b = tf.Variable(tf.truncated_normal([64],stddev=0.1))
+        fc21 = tf.nn.bias_add(tf.matmul(fc1, fc2w), fc2b)
+        fc2 = tf.nn.relu(fc21)
+
+    # fc3
+    with tf.name_scope('fc3') as scope:
+        fc3w = tf.Variable(tf.truncated_normal([64, 10], stddev=0.1), name='weights')
+        fc3b = tf.Variable(tf.truncated_normal([10],stddev=0.1))
+        fc31 = tf.nn.bias_add(tf.matmul(fc2, fc3w), fc3b, name='scope')
+    prediction = tf.nn.softmax(fc31)
+    loss = tf.losses.softmax_cross_entropy(onehot_labels=ys, logits=prediction)
+    # prediction = tf.clip_by_value(prediction,1e-10,1.0)
+    # loss = -tf.reduce_sum(ys*tf.log(prediction))
+    train = tf.train.GradientDescentOptimizer(0.001).minimize(loss)
+    with tf.Session() as sess:
+        save = tf.train.Saver()
+        init = tf.global_variables_initializer()
+        sess.run(init)
+        for i in range(1000):
+            x,y = shuffle(x,y)
+           # xtest,ytest = shuffle(xtest,ytest)
+            sess.run(train,feed_dict={xss:x[0:100],ys:y[0:100]})
+            print(sess.run(loss,feed_dict={xss:xtest[0:100],ys:ytest[0:100]}))
+        save.save(sess, "D:/my_vgg16_model.model")
+if __name__ == "__main__":
+    x_train, y_train = load_mnist('./data/fashion', kind='train')
+    x_test, y_test = load_mnist('./data/fashion', kind='t10k')
+    x_train = np.array(x_train)
+    x_test = np.array(x_test)
+    x_train = x_train / 225.0
+    x_test = x_test / 225.0
+    x_train = np.reshape(x_train, (-1, 28, 28));
+    x_test = np.reshape(x_test, (-1, 28, 28));
+    y_train = get_one_hot(y_train)
+    y_test = get_one_hot(y_test)
+    train_vgg16(x_train, y_train, x_test, y_test)
+
+#2.vgg16效果很差，一时模型不知如何选，偷看了下readme中大神们的实现方式，发现2Conv+pooling再tensorflow框架下居然能达到百分之90多的精确度，唔，对于初学者来说
+#已经还不错，那就尝试下把，用他的code跑的超级慢，甚至比vgg16还慢，用自己的把，我在基础上中间还加了两层，额额，anyhow，好像损失函数在不停的减少，难道是越简单
+越好用嘛，又看到一位大婶用svm也达到了88的精确度，诶，调参侠，代码如下:
+import tensorflow as tf
+import numpy as np
+import os
+import mdata
+import gzip
+from sklearn.utils import shuffle
+np.set_printoptions(suppress=True)
+def load_mnist(path, kind='train'):
+    """Load MNIST data from `path`"""
+    labels_path = os.path.join(path,
+                               '%s-labels-idx1-ubyte.gz'
+                               % kind)
+    images_path = os.path.join(path,
+                               '%s-images-idx3-ubyte.gz'
+                               % kind)
+
+    with gzip.open(labels_path, 'rb') as lbpath:
+        labels = np.frombuffer(lbpath.read(), dtype=np.uint8,
+                               offset=8)
+
+    with gzip.open(images_path, 'rb') as imgpath:
+        images = np.frombuffer(imgpath.read(), dtype=np.uint8,
+                               offset=16).reshape(len(labels), 784)
+
+    return images, labels
+def get_one_hot(label):
+    classes = max(label) + 1  ##类别数为最大数加1
+    one_hot_label = np.zeros(shape=(label.shape[0], classes))  ##生成全0矩阵
+    one_hot_label[np.arange(0, label.shape[0]), label] = 1
+    return one_hot_label
+def train_vgg16(x,y,xtest,ytest):
+    #input xs data
+    xss = tf.placeholder(tf.float32,[None,28,28])
+    #input ys data
+    ys = tf.placeholder(tf.float32,[None,10])
+    # reshape my xs data
+    xs = tf.reshape(xss,[-1,28,28,1])
+    #cnn layer:1
+    w1 = tf.Variable(tf.truncated_normal([3, 3, 1 ,32], stddev=0.1), name="w")
+    conv1 = tf.nn.conv2d(xs, w1, [1, 1, 1, 1], padding="SAME")
+    biases1 = tf.Variable(tf.truncated_normal([32], stddev=0.1))
+    out1 = tf.nn.bias_add(conv1, biases1)
+    conv1_1 = out1
+
+    w2 = tf.Variable(tf.truncated_normal([3,3,32,64],stddev=0.1),name = "w")
+    conv2 = tf.nn.conv2d(conv1_1,w2,[1,1,1,1],padding="SAME")
+    biases2 = tf.Variable(tf.truncated_normal([64],stddev=0.1))
+    out2 = tf.nn.bias_add(conv2,biases2)
+    conv1_2 = tf.nn.relu(out2)
+
+    pool_2 = tf.nn.max_pool(conv1_2,[1,2,2,1],[1,2,2,1],padding="SAME")
+
+    # fc1
+    with tf.name_scope('fc1') as scope:
+        shape = int(np.prod(pool_2.get_shape()[1:]))
+        fc1w = tf.Variable(tf.truncated_normal([shape, 128], stddev=0.1), name='weights')
+        fc1b = tf.Variable(tf.truncated_normal([128],stddev=0.1))
+        pool5_flat = tf.reshape(pool_2, [-1, shape])
+        fc11 = tf.matmul(pool5_flat, fc1w) + fc1b
+        fc1 = tf.nn.relu(fc11)
+
+    # fc3
+    with tf.name_scope('fc3') as scope:
+        fc3w = tf.Variable(tf.truncated_normal([128, 10], stddev=0.1), name='weights')
+        fc3b = tf.Variable(tf.truncated_normal([10],stddev=0.1))
+        fc31 = tf.nn.bias_add(tf.matmul(fc1, fc3w), fc3b, name='scope')
+        #fc31 = tf.nn.dropout(fc31,0.5)
+    prediction = tf.nn.softmax(fc31)
+    loss = tf.losses.softmax_cross_entropy(onehot_labels=ys,logits=prediction)
+    train = tf.train.GradientDescentOptimizer(0.001).minimize(loss)
+    with tf.Session() as sess:
+        save = tf.train.Saver()
+        init = tf.global_variables_initializer()
+        sess.run(init)
+        for i in range(1000):
+            x,y = shuffle(x,y)
+            xtest,ytest = shuffle(xtest,ytest)
+            sess.run(train,feed_dict={xss:x[0:400],ys:y[0:400]})
+            print(sess.run(loss,feed_dict={xss:xtest[0:1000],ys:ytest[0:1000]}))
+        save.save(sess, "D:/my_vgg16_model.model")
+if __name__ == "__main__":
+    x_train, y_train = load_mnist('./data/fashion', kind='train')
+    x_test, y_test = load_mnist('./data/fashion', kind='t10k')
+    x_train = np.array(x_train)
+    x_test = np.array(x_test)
+    x_train = x_train/225.0
+    x_test = x_test/225.0
+    x_train = np.reshape(x_train,(-1,28,28));
+    x_test = np.reshape(x_test,(-1,28,28));
+    y_train = get_one_hot(y_train)
+    y_test = get_one_hot(y_test)
+    train_vgg16(x_train,y_train,x_test,y_test)
+
