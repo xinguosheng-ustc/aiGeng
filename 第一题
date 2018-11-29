@@ -171,7 +171,7 @@ def train_vgg16(x,y,xtest,ytest):
         save = tf.train.Saver()
         init = tf.global_variables_initializer()
         sess.run(init)
-        for i in range(1000):
+        for i in range(1000):#个人电脑原因，这里直接1000，应该做策略
             x,y = shuffle(x,y)
            # xtest,ytest = shuffle(xtest,ytest)
             sess.run(train,feed_dict={xss:x[0:100],ys:y[0:100]})
